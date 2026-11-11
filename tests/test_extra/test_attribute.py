@@ -1,5 +1,6 @@
 """Test attribute selectors."""
 from .. import util
+import soupsieve as sv
 
 
 class TestAttribute(util.TestCase):
@@ -50,3 +51,63 @@ class TestAttribute(util.TestCase):
             ["div", "0", "1", "2", "3", "pre", "4", "6"],
             flags=util.HTML5
         )
+
+    def assert_syntax_error_no_timeout(self, pattern):
+        """Assert that compiling the pattern fails with a syntax error and not a timeout."""
+
+        import signal
+
+        if not hasattr(signal, 'SIGALRM'):
+            # Windows does not provide `SIGALRM`, so just check for the syntax error.
+            with self.assertRaises(sv.SelectorSyntaxError):
+                sv.compile(pattern)
+            return
+
+        def timeout_handler(signum, frame):
+            raise TimeoutError
+
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(3)
+
+        passed = False
+        try:
+            with self.assertRaises(sv.SelectorSyntaxError):
+                sv.compile(pattern)
+            passed = True
+        except TimeoutError:
+            pass
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+        self.assertTrue(passed)
+
+    def test_bad_attribute_unclused(self):
+        """Test bad attribute fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout('[a="' + ('x' * 300))
+
+    def test_bad_attribute_unclosed_single_quote(self):
+        """Test bad attribute with unclosed single quote fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout("[a='" + ('x' * 300))
+
+    def test_bad_contains_unclosed(self):
+        """Test bad `:-soup-contains()` value with unclosed quote fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout('p:-soup-contains("' + ('x' * 300))
+        self.assert_syntax_error_no_timeout("p:-soup-contains('" + ('x' * 300))
+
+    def test_bad_lang_unclosed(self):
+        """Test bad `:lang()` value with unclosed quote fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout('p:lang("' + ('x' * 300))
+        self.assert_syntax_error_no_timeout("p:lang('" + ('x' * 300))
+
+    def test_attribute_quoted_value_long(self):
+        """Test that long, properly closed quoted values still match."""
+
+        value = 'x' * 300
+        markup = '<div><p id="1" title="{0}"></p><p id="2" title="{0}y"></p></div>'.format(value)
+        self.assert_selector(markup, '[title="{}"]'.format(value), ["1"], flags=util.HTML)
+        self.assert_selector(markup, "[title='{}']".format(value), ["1"], flags=util.HTML)
+        self.assert_selector(markup, '[title="{}\\79"]'.format(value), ["2"], flags=util.HTML)
